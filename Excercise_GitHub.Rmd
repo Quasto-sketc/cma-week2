@@ -1,0 +1,234 @@
+---
+title: "Excercise_2"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+## Load the necessary libraries ################################################
+
+library(readr)        # to import tabular data (e.g. csv)
+library(dplyr)        # to manipulate (tabular) data
+library(ggplot2)      # to visualize data
+library(sf)           # to handle spatial vector data
+library(terra)        # To handle raster data
+library(lubridate)    # To handle dates and times
+library(ggpubr)       # To arrange multiple ggplots on the same page
+
+#Task 1
+## Import the downloaded csv ##################################################
+
+ws_be <- read_csv("wildschwein_BE_2056.csv")
+ws_be_sf <- st_as_sf(ws_be, coords = c("E", "N"), crs = 2056, remove = FALSE)
+
+```
+
+```{r}
+
+# first overview
+#producing data with timelag
+
+ws_be_sf %>% 
+  group_by(TierID) %>% 
+  mutate(., timelag = as.integer(difftime(lead(DatetimeUTC),DatetimeUTC), units = "secs")) -> wildschwein_BE_sf
+```
+
+# wildschwein <- wildschwein_BE_sf %>% group_by(TierID) %>% mutate(timelag = as.integer(difftime(lead(DatetimeUTC),DatetimeUTC))) 
+
+
+
+```{r}
+
+# wildschwein$timelag  <- as.numeric(difftime(lead(wildschwein$DatetimeUTC), wildschwein$DatetimeUTC))
+# wildschwein <- mutate(wildschwein,timelag = as.numeric(difftime(lead(DatetimeUTC),DatetimeUTC)))
+
+  
+
+#Task 2
+
+# How many individuals were tracked?
+
+wildschwein_BE_sf %>% count(TierID) 
+
+count
+
+# further exploration
+
+wildschwein_BE_sf %>% 
+  st_drop_geometry() %>% 
+  group_by(TierID, TierName) %>% 
+  summarise(pings = n(),
+            start_time = min(DatetimeUTC), 
+            end_time = max(DatetimeUTC),
+            sample_interval = mean(timelag, na.rm = T),
+            tracking_time = sum(timelag, na.rm = T)) %>% 
+  mutate(tracking_time_days = days(day(seconds_to_period(tracking_time)))) 
+
+
+```
+
+
+# Were all individuals tracked concurrently or sequentially?
+# For how long were the individual tracked? Are there gaps?
+
+
+Creating visualisations
+```{r}
+ggplot(data = ws_be_sf) +
+  geom_boxplot(aes(x = DatetimeUTC, y = TierID)) -> p1
+
+p1
+
+ggplot(data = wildschwein_BE_sf) +
+  geom_histogram(aes(x = timelag, fill = TierID), binwidth = 100) +
+  lims(x = c(0,15000))
+  
+
+#warum ist die Visualiserung so unpassend?
+
+
+```
+
+
+What is the temporal sampling interval between the locations?
+```{r}
+wildschwein_BE_sf %>%                         # Take wildschwein...
+  group_by(TierID) %>%                        # ...group it by TierID
+  summarise(                                  # Summarise the data...
+    mean_timelag = mean(timelag,na.rm = T)    # ...by calculating the mean timelag
+  )
+
+# Answer:
+#         002A = 1286
+#         016A = 1412
+#         018A = 1599
+```
+
+
+
+Task 3: Deriving movement parameters I: Speed
+```{r}
+
+wildschwein_BE_sf %>% 
+  mutate(steplength = sqrt((E - lead(E,1))^2 + (N - lead(N,1))^2),
+         speed = steplength/timelag)
+
+# units are measured in m/s
+
+
+```
+
+
+Task 4: Cross-scale movement analysis
+```{r}
+#loading data
+
+caro <- read_csv("caro60.csv")
+
+
+caro_sf <- st_as_sf(caro, coords = c("E", "N"), crs = 2056, remove = FALSE)
+
+?sf
+
+caro_sf %>% 
+  slice(seq(from=1, to = 200, by = 3)) -> caro_3
+caro_sf %>% 
+  slice(seq(from=1, to = 200, by = 6)) -> caro_6
+caro_sf %>% 
+  slice(seq(from=1, to = 200, by = 9)) -> caro_9
+
+rm(caro3)
+
+?remove
+
+
+```
+
+
+
+Calculate timelag, steplength and speed
+```{r}
+
+calculator <- function(df_input, interval){
+  df_input %>% 
+    mutate(timelag = as.numeric(difftime(lead(DatetimeUTC),DatetimeUTC), units = "secs"), 
+           steplength = sqrt((E - lead(E,1))^2 + (N - lead(N,1))^2),
+           speed = steplength/timelag,
+           interval = interval) -> df_output
+           
+  
+  return(df_output)
+} 
+
+calculator(caro_sf, "1 minute") -> caro
+calculator(caro_3, "3 minutes") -> caro_3
+calculator(caro_6, "6 minutes") -> caro_6
+calculator(caro_9, "9 minutes") -> caro_9
+
+rbind(caro, caro_3, caro_6, caro_9) -> caro_merge
+
+```
+
+```{r}
+
+ggplot(data = caro_merge) +
+  geom_line(aes(x = DatetimeUTC, y = speed, color = interval))
+
+caro_merge %>% 
+  filter(interval == "1 minute" | interval  == "3 minutes") %>% 
+  ggplot(data = ., aes(x = E, y = N, color = interval, alpha = interval)) +
+  geom_path() +
+  geom_point() +
+  scale_alpha_discrete(range = c(0.4, 1)) -> p1
+
+p1
+
+caro_merge %>% 
+  filter(interval == "1 minute" | interval  == "6 minutes") %>% 
+  ggplot(data = ., aes(x = E, y = N, color = interval, alpha = interval)) +
+  geom_path() +
+  geom_point() +
+  scale_alpha_discrete(range = c(0.4, 1)) -> p2
+
+p2
+
+caro_merge %>% 
+  filter(interval == "1 minute" | interval  == "9 minutes") %>% 
+  ggplot(data = ., aes(x = E, y = N, color = interval, alpha = interval)) +
+  geom_path() +
+  geom_point() +
+  scale_alpha_discrete(range = c(0.4, 1)) -> p3
+
+p3
+
+
+
+
+ggarrange(p1, p2, p3)
+
+
+```
+
+
+Task 5: Deriving movement parameters II: Rolling window functions
+```{r}
+
+library(zoo)
+
+example <- rnorm(10)
+rollmean(example,k = 3,fill = NA,align = "left")
+##  [1] -0.5049544 -0.3781283 -0.1273157  0.4523153  0.4534811  0.8658536
+##  [7]  0.5452571  1.0210648         NA         NA
+rollmean(example,k = 4,fill = NA,align = "left")
+##  [1] -0.25933381 -0.22379720  0.06456868  0.45949282  0.70918920  0.56899826
+##  [7]  0.88605495          NA          NA          NA
+
+
+library(zoo)
+rollmean(caro$speed, k = 3)
+
+```
+
